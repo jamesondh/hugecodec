@@ -12,6 +12,14 @@ from .format import (
     EFFECT_EMPTY,
 )
 from .reader import read_song, ReadError
+from .waves import (
+    Wave,
+    WaveReport,
+    analyze,
+    from_harmonics,
+    interval_wave,
+    wave_from_song_bank,
+)
 
 __all__ = [
     "Song",
@@ -25,4 +33,11 @@ __all__ = [
     "EFFECT_EMPTY",
     "read_song",
     "ReadError",
+    # waves
+    "Wave",
+    "WaveReport",
+    "analyze",
+    "from_harmonics",
+    "interval_wave",
+    "wave_from_song_bank",
 ]

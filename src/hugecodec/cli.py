@@ -14,6 +14,7 @@ from pathlib import Path
 from .format import INSTR_TYPE_NAMES
 from .json_dump import song_to_json
 from .reader import read_song, ReadError
+from .waves import Wave, analyze, WAVE_MAX
 
 
 def _cmd_dump(args: argparse.Namespace) -> int:
@@ -79,6 +80,90 @@ def _cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _wave_referrers(song, bank_index: int) -> list[tuple[int, str]]:
+    """List (instrument_slot, name) pairs of Wave instruments pointing at bank_index."""
+    out: list[tuple[int, str]] = []
+    for slot, inst in enumerate(song.wave_instruments):
+        if slot == 0:
+            continue  # Pascal slot 0 unused
+        if inst.waveform == bank_index and (inst.name or inst.initial_volume != 0):
+            out.append((slot, inst.name))
+    return out
+
+
+def _print_wave_analysis(bank_index: int,
+                         wave: Wave,
+                         referrers: list[tuple[int, str]],
+                         show_shape: bool,
+                         top_bins: int) -> None:
+    """Print a single wave's analysis block."""
+    report = analyze(wave, top_n=top_bins)
+    refs = ", ".join(f"#{slot} {name!r}" for slot, name in referrers) or "(unreferenced)"
+    print(f"bank[{bank_index:2d}]  used by: {refs}")
+    print(f"  hex: {wave.to_hex()}")
+    print(f"  DC={report.dc_offset:.2f}  AC={report.ac_energy:.2f}  "
+          f"kind={report.inferred_kind}")
+    print(f"  → {report.description}")
+
+    # Top peaks with mini-bars, scaled to the strongest non-DC bin
+    if report.peaks:
+        max_mag = max(p.magnitude for p in report.peaks) or 1.0
+        print("  FFT peaks:")
+        for p in report.peaks:
+            bar_len = int(round(p.magnitude / max_mag * 24))
+            print(f"    bin {p.bin:2d}: {p.magnitude:6.2f}  {'|' * bar_len}")
+
+    if show_shape:
+        print("  shape:")
+        for row in wave.ascii_shape(rows=10):
+            print(f"    {row}")
+    print()
+
+
+def _cmd_waves(args: argparse.Namespace) -> int:
+    try:
+        song = read_song(args.path)
+    except ReadError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"file: {args.path}")
+    print(f"source version: V{song.source_version}")
+    print()
+
+    silent = bytes(len(song.waves[0]))  # all-zero comparison
+    indices: list[int]
+    if args.wave is not None:
+        if not (0 <= args.wave < len(song.waves)):
+            print(f"error: --wave must be 0..{len(song.waves)-1}", file=sys.stderr)
+            return 1
+        indices = [args.wave]
+    else:
+        indices = list(range(len(song.waves)))
+
+    printed = 0
+    for i in indices:
+        raw = song.waves[i]
+        is_silent = raw == silent
+        # Skip silent+unreferenced unless --all
+        referrers = _wave_referrers(song, i)
+        if not args.all and is_silent and not referrers:
+            continue
+        wave = Wave.from_bytes(raw)
+        _print_wave_analysis(
+            bank_index=i,
+            wave=wave,
+            referrers=referrers,
+            show_shape=not args.no_shape,
+            top_bins=args.top_bins,
+        )
+        printed += 1
+
+    if printed == 0:
+        print("(no non-silent, referenced waves — try --all)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hugecodec", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -93,6 +178,26 @@ def main(argv: list[str] | None = None) -> int:
     i = sub.add_parser("info", help="header-only human-readable summary")
     i.add_argument("path", type=Path)
     i.set_defaults(func=_cmd_info)
+
+    w = sub.add_parser(
+        "waves",
+        help="spectral analysis of wave-bank contents",
+        description=(
+            "Report DFT peaks, detected intervals, and an ASCII shape for each "
+            "wave in the song's 16-slot wave bank. By default, silent and "
+            "unreferenced slots are omitted."
+        ),
+    )
+    w.add_argument("path", type=Path)
+    w.add_argument("--wave", type=int, default=None,
+                   help="analyze only bank[N] (0..15)")
+    w.add_argument("--all", action="store_true",
+                   help="include silent / unreferenced slots")
+    w.add_argument("--no-shape", action="store_true",
+                   help="omit the ASCII wave plot")
+    w.add_argument("--top-bins", type=int, default=6,
+                   help="how many FFT peaks to list per wave (default 6)")
+    w.set_defaults(func=_cmd_waves)
 
     args = parser.parse_args(argv)
     return args.func(args)
