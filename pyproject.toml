@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hugecodec"
+version = "0.0.1"
+description = "Parser/writer for hUGETracker .uge files"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Jameson Hodge" }]
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+hugecodec = "hugecodec.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
