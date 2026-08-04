@@ -64,11 +64,38 @@ There is deliberately no `triad_wave()` or `seventh_wave()`. A single
 tracker note. See `NOTES.md` "Wave-channel sample interpretation" for the
 perceptual analysis and the space of interesting timbres this opens up.
 
+## Serum 2 wavetable export
+
+For auditioning wave-channel timbres in a modern DAW (compose in FL,
+audition through Serum), the `wavetable` subcommand emits Serum-2-shaped
+WAV files — 2048-sample single-cycle frames with a RIFF `clm ` chunk so
+Serum treats the file as a pre-formatted wavetable instead of running
+frequency-estimation on it.
+
+```bash
+python3 -m hugecodec wavetable packs                                # list curated packs
+python3 -m hugecodec wavetable single formant-mid --out formant-mid.wav
+python3 -m hugecodec wavetable pack --preset seventh-chords --out sevenths.wav
+python3 -m hugecodec wavetable pack --frames p8,thickener,formant-mid --out mix.wav
+python3 -m hugecodec wavetable all --out ./serum-tables/           # everything
+```
+
+Each 32-sample GB wave is zero-order-hold-expanded to 2048 samples (each
+nibble repeated 64×) so the DAC stair-step character is preserved
+exactly — no FFT smoothing, no invented harmonics. Serum's own mipmap
+playback handles anti-aliasing. Multi-frame packs concatenate related
+presets so Serum's WT-position knob morphs through them.
+
+Single-frame WAVs are ~4 KB (vs ~176 KB for the `audition render` tone
+outputs), and they load directly as wavetables rather than triggering
+sample-import analysis.
+
 ## Tests
 
 ```bash
 python3 tests/test_roundtrip.py     # parse every sample without crashing
 python3 tests/test_waves.py         # spectral analysis + synthesis checks
+python3 tests/test_wavetable.py     # Serum-shaped WAV emitter checks
 ```
 
 Test corpus lives at `~/hugetracker-sample-songs/` — 22 files spanning V1–V6.

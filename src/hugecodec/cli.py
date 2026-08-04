@@ -16,6 +16,11 @@ from .json_dump import song_to_json
 from .presets import PRESETS, PRESET_CATEGORIES
 from .reader import read_song, ReadError
 from .waves import Wave, analyze, render_wav, note_to_hz, NOTE_HZ, WAVE_MAX
+from .wavetable import (
+    CURATED_PACKS,
+    PACK_DESCRIPTIONS,
+    write_serum_wavetable,
+)
 
 
 def _cmd_dump(args: argparse.Namespace) -> int:
@@ -246,6 +251,128 @@ def _cmd_audition(args: argparse.Namespace) -> int:
     return 1
 
 
+# --------------------------------------------------------------------------- #
+# wavetable — Serum-shaped WAV emitter                                        #
+# --------------------------------------------------------------------------- #
+
+def _cmd_wavetable(args: argparse.Namespace) -> int:
+    """Emit Serum-2-compatible wavetable WAVs from the preset registry."""
+    action = args.action
+
+    if action == "packs":
+        print("Curated multi-frame packs. Each concatenates related presets")
+        print("into one WAV so Serum's WT-position knob morphs through them.")
+        print()
+        for name, frames in CURATED_PACKS.items():
+            desc = PACK_DESCRIPTIONS.get(name, "")
+            print(f"[{name}]  {desc}")
+            print(f"  frames ({len(frames)}): {', '.join(frames)}")
+            print()
+        return 0
+
+    if action == "single":
+        if args.name not in PRESETS:
+            print(f"error: unknown preset {args.name!r}. "
+                  f"Try `hugecodec audition list`.", file=sys.stderr)
+            return 1
+        wave = PRESETS[args.name]
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_serum_wavetable(
+            [wave],
+            path=out_path,
+            interp=args.interp,
+            vendor=args.vendor,
+        )
+        size = out_path.stat().st_size
+        print(f"wrote {out_path} ({size:,} bytes, 1 frame, interp={args.interp})")
+        return 0
+
+    if action == "pack":
+        # Two entry paths: --preset NAME (curated) or --frames a,b,c (free-form)
+        if args.preset and args.frames:
+            print("error: pass either --preset or --frames, not both",
+                  file=sys.stderr)
+            return 1
+        if args.preset:
+            if args.preset not in CURATED_PACKS:
+                print(f"error: unknown pack {args.preset!r}. "
+                      f"Try `hugecodec wavetable packs`.", file=sys.stderr)
+                return 1
+            frame_names = list(CURATED_PACKS[args.preset])
+        elif args.frames:
+            frame_names = [n.strip() for n in args.frames.split(",") if n.strip()]
+            if not frame_names:
+                print("error: --frames must list at least one preset",
+                      file=sys.stderr)
+                return 1
+        else:
+            print("error: pack requires --preset NAME or --frames a,b,c",
+                  file=sys.stderr)
+            return 1
+
+        missing = [n for n in frame_names if n not in PRESETS]
+        if missing:
+            print(f"error: unknown presets: {missing}", file=sys.stderr)
+            return 1
+
+        waves = [PRESETS[n] for n in frame_names]
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_serum_wavetable(
+            waves,
+            path=out_path,
+            interp=args.interp,
+            vendor=args.vendor,
+        )
+        size = out_path.stat().st_size
+        print(f"wrote {out_path} ({size:,} bytes, {len(waves)} frames, "
+              f"interp={args.interp})")
+        print(f"  frames: {', '.join(frame_names)}")
+        return 0
+
+    if action == "all":
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        singles_dir = out_dir / "singles"
+        packs_dir = out_dir / "packs"
+        singles_dir.mkdir(exist_ok=True)
+        packs_dir.mkdir(exist_ok=True)
+
+        # Singles use stair-step interp (0) — each is a static timbre with
+        # the authentic DAC character.
+        n_singles = 0
+        for name, wave in PRESETS.items():
+            target = singles_dir / f"{name}.wav"
+            write_serum_wavetable(
+                [wave],
+                path=target,
+                interp=0,
+                vendor=args.vendor,
+            )
+            n_singles += 1
+
+        # Packs use linear crossfade interp (1) so morphing sounds smooth.
+        n_packs = 0
+        for pack_name, frame_names in CURATED_PACKS.items():
+            waves = [PRESETS[n] for n in frame_names]
+            target = packs_dir / f"{pack_name}.wav"
+            write_serum_wavetable(
+                waves,
+                path=target,
+                interp=1,
+                vendor=args.vendor,
+            )
+            n_packs += 1
+
+        print(f"wrote {n_singles} single-frame wavetables to {singles_dir}")
+        print(f"wrote {n_packs} multi-frame packs to {packs_dir}")
+        return 0
+
+    print(f"error: unknown wavetable action {action!r}", file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hugecodec", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -322,6 +449,68 @@ def main(argv: list[str] | None = None) -> int:
     a_render.add_argument("--amplitude", type=float, default=0.5,
                           help="peak amplitude in [0,1] (default 0.5)")
     a_render.set_defaults(func=_cmd_audition)
+
+    # -- wavetable ----------------------------------------------------------
+    wt = sub.add_parser(
+        "wavetable",
+        help="emit Serum-2-shaped wavetable WAVs (2048-sample frames + clm chunk)",
+        description=(
+            "Serum-shaped wavetable exporter. Unlike `audition render` which "
+            "emits ~2s tones, this emits single-cycle 2048-sample frames with "
+            "the RIFF `clm` chunk Serum recognizes, so files load as "
+            "pre-formatted wavetables instead of triggering sample-import "
+            "frequency-estimation. Multi-frame packs concatenate related "
+            "presets so Serum's WT-position knob morphs through them."
+        ),
+    )
+    wt_sub = wt.add_subparsers(dest="action", required=True)
+
+    wt_packs = wt_sub.add_parser(
+        "packs",
+        help="list curated multi-frame packs and their contents",
+    )
+    wt_packs.set_defaults(func=_cmd_wavetable)
+
+    wt_single = wt_sub.add_parser(
+        "single",
+        help="write one preset as a single-frame Serum wavetable WAV",
+    )
+    wt_single.add_argument("name", help="preset name (see `audition list`)")
+    wt_single.add_argument("--out", required=True, help="output WAV path")
+    wt_single.add_argument(
+        "--interp", type=int, default=0, choices=(0, 1),
+        help="clm interpolation flag: 0=stair-step (default), 1=linear",
+    )
+    wt_single.add_argument("--vendor", default="hugecodec",
+                           help="clm vendor / comment string")
+    wt_single.set_defaults(func=_cmd_wavetable)
+
+    wt_pack = wt_sub.add_parser(
+        "pack",
+        help="write a multi-frame morphable wavetable",
+    )
+    wt_pack.add_argument("--preset", default=None,
+                         help="curated pack name (see `wavetable packs`)")
+    wt_pack.add_argument("--frames", default=None,
+                         help="comma-separated preset names for a custom pack")
+    wt_pack.add_argument("--out", required=True, help="output WAV path")
+    wt_pack.add_argument(
+        "--interp", type=int, default=1, choices=(0, 1),
+        help="clm interpolation flag: 1=linear (default, smooth morphs), "
+             "0=stair-step",
+    )
+    wt_pack.add_argument("--vendor", default="hugecodec",
+                         help="clm vendor / comment string")
+    wt_pack.set_defaults(func=_cmd_wavetable)
+
+    wt_all = wt_sub.add_parser(
+        "all",
+        help="write every preset as a single + all curated packs into a dir",
+    )
+    wt_all.add_argument("--out", required=True, help="output directory")
+    wt_all.add_argument("--vendor", default="hugecodec",
+                        help="clm vendor / comment string")
+    wt_all.set_defaults(func=_cmd_wavetable)
 
     args = parser.parse_args(argv)
     return args.func(args)
