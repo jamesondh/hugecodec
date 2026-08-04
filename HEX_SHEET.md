@@ -17,7 +17,7 @@ See `NOTES.md` for the adjacency rule and the reasoning behind these classificat
 ## F1 · Reinforced dyads (ears-confirmed, ship-ready)
 
 Codified octave-doubled-dyad recipe via `interval_wave_reinforced()`. Ears-confirmed
-as clean adjacent-bin dyads — cleaner than FADE's own hand-shaped versions in
+as clean adjacent-bin dyads — cleaner than FADE's own OpenMPT-sampled versions in
 listening tests.
 
 ### reinforced-m3   —   bins 5:6 + 10:12 (m3 dyad + octave doubling)

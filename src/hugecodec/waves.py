@@ -437,7 +437,8 @@ def interval_wave(interval: str) -> Wave:
 
 
 def interval_wave_reinforced(interval: str, octave_weight: float = 0.3) -> Wave:
-    """Build an octave-reinforced dyad wave — the design pattern FADE uses.
+    """Build an octave-reinforced dyad wave — the spectral pattern seen in
+    FADE's Microplastics `minor`/`major`/`fourth` waves.
 
     Same primary dyad as ``interval_wave()`` (bins K:K+1 for the chosen
     interval), plus a lower-amplitude octave-doubling at bins 2K:2(K+1). The
@@ -448,9 +449,12 @@ def interval_wave_reinforced(interval: str, octave_weight: float = 0.3) -> Wave:
     two-partial sums; they consistently include energy at the octave-doubled
     pair of the primary dyad. The default ``octave_weight`` = 0.3 matches
     FADE's ~90-95% purity band; higher weights (0.5+) start to collapse the
-    dyad perception. FADE's own waves aren't perfectly reproducible from a
-    formula (they appear to be hand-shaped in the wave editor), but this
-    recipe captures the design principle.
+    dyad perception. FADE's own waves aren't perfectly reproducible from any
+    additive formula (per his YouTube comment they're OpenMPT chord one-shots
+    resampled into 32×4 via a Nyquist script, so the exact per-sample values
+    are decimation artifacts), but this recipe captures the spectral pattern
+    that survives that process — and, empirically, sounds cleaner than the
+    FADE originals in listening tests.
 
     Only accepts m3/M3/P4/P5 like ``interval_wave()``.
     """

@@ -2,9 +2,9 @@
 
 REORGANIZED 2026-08-04 after listening tests. Categories:
 
-    F1. Reinforced dyads — codified octave-doubled-dyad recipe (the design
-        pattern reverse-engineered from FADE's Microplastics waves).
-        Ears-confirmed: sounds cleaner than FADE's own hand-shaped waves.
+    F1. Reinforced dyads — codified octave-doubled-dyad recipe (the spectral
+        residue observed in FADE's Microplastics waves).
+        Ears-confirmed: sounds cleaner than FADE's own OpenMPT-sampled waves.
     F2. Extended dyads — adjacent-bin dyads outside the classic
         m3/M3/P4/P5 set. Ears-verdict: tinny colors, not clear dyads —
         kept as color reference material, not promoted to interval_wave().
@@ -20,10 +20,12 @@ REORGANIZED 2026-08-04 after listening tests. Categories:
     H. Inharmonic metallic — coprime-prime clusters. Jameson-confirmed
         strongest of the non-dyad exploratory categories.
 
-FADE's own waves were investigated as a reference and found to be
-hand-shaped (not formulaic). NOT shipped as presets to avoid republishing
-someone else's specific artistic waves. The codified F1 recipe captures
-their design principle and Jameson's ears prefer F1 to the FADE originals.
+FADE's own waves were investigated as a reference and found to be OpenMPT
+chord one-shots resampled into the 32×4 wave format via a Nyquist script
+(per FADE's YouTube comment on the song), not formulaic. NOT shipped as
+presets to avoid republishing someone else's specific artistic waves. The
+codified F1 recipe captures the spectral pattern that survives that
+sampling process, and Jameson's ears prefer F1 to the FADE originals.
 
 See NOTES.md for the theory and the listening-test log.
 """
@@ -42,8 +44,9 @@ from .waves import (
 # Category F1: Reinforced dyads (highest confidence)                          #
 # --------------------------------------------------------------------------- #
 # Adjacent-bin dyad + octave-doubled dyad at 30% amplitude. Codified version
-# of the design pattern reverse-engineered from FADE's minor/major/fourth.
-# Ears-confirmed 2026-08-04: sounds cleaner than FADE's hand-shaped versions.
+# of the spectral residue observed in FADE's minor/major/fourth (which are
+# OpenMPT chord one-shots resampled via a Nyquist script, not additive designs).
+# Ears-confirmed 2026-08-04: sounds cleaner than FADE's OpenMPT-sampled versions.
 #
 # Naming convention: REINFORCED_MIN3 = minor third (5:6), REINFORCED_MAJ3 =
 # major third (4:5), REINFORCED_P4 = perfect fourth (3:4). "MIN"/"MAJ" prefix

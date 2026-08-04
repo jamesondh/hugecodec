@@ -83,15 +83,22 @@ intervals: m3, M3, P4, P5. Wider ratios (m6, M6, m7, M7, P8) exist
 mathematically but on 32 samples × 4 bits they don't survive as intervals —
 they collapse into a single colored timbre.
 
-### FADE's waves are hand-shaped, not additive (2026-08-04)
+### FADE's waves are OpenMPT-sourced samples, not additive (2026-08-04)
 
 Attempted to regenerate FADE Microplastics `minor` / `major` / `fourth` from
 `from_harmonics()` + 4-bit quantization. Result: they can't be reproduced
 from a clean formula. Best least-squares fit over reasonable candidate bin
 sets leaves RMS error ~5 nibbles per sample (33% of the 0..15 range) with
-only 2-4 of 32 samples matching exactly. The waves were clearly hand-shaped
-in the wave editor — likely drawn / tweaked pixel-by-pixel after an initial
-dyad sketch.
+only 2-4 of 32 samples matching exactly.
+
+Per FADE's own YouTube comment on this song: "I used OpenMPT to generate
+chord samples, took one shot of each, and sampled them using a Nyquist
+script." So the residual error isn't pixel-drawing in the wave editor —
+it's what falls out of decimating an arbitrary chord waveform into 32
+samples × 4 bits via a resampling script. The spectral pattern that keeps
+surviving the analysis (adjacent-bin dyad + octave-doubled reinforcement
+at ~30% amplitude) is what remains after that squeeze, not a deliberate
+additive recipe.
 
 What CAN be codified is FADE's spectral design pattern: primary
 two-adjacent-bin dyad + octave-doubled dyad at ~30% amplitude. This produces
