@@ -83,6 +83,85 @@ intervals: m3, M3, P4, P5. Wider ratios (m6, M6, m7, M7, P8) exist
 mathematically but on 32 samples × 4 bits they don't survive as intervals —
 they collapse into a single colored timbre.
 
+### FADE's waves are hand-shaped, not additive (2026-08-04)
+
+Attempted to regenerate FADE Microplastics `minor` / `major` / `fourth` from
+`from_harmonics()` + 4-bit quantization. Result: they can't be reproduced
+from a clean formula. Best least-squares fit over reasonable candidate bin
+sets leaves RMS error ~5 nibbles per sample (33% of the 0..15 range) with
+only 2-4 of 32 samples matching exactly. The waves were clearly hand-shaped
+in the wave editor — likely drawn / tweaked pixel-by-pixel after an initial
+dyad sketch.
+
+What CAN be codified is FADE's spectral design pattern: primary
+two-adjacent-bin dyad + octave-doubled dyad at ~30% amplitude. This produces
+purity ~90-92% (vs FADE's 94-97% and vs a clean dyad's 99%) and — importantly —
+reads AS CLEAN OR CLEANER than FADE's originals in listening tests. Shipped
+as `interval_wave_reinforced()` (F1 presets: `reinforced-m3`, `reinforced-M3`,
+`reinforced-P4`).
+
+### The reinforced-P5 problem (cut 2026-08-04)
+
+Tried `interval_wave_reinforced("P5")` — bins 2:3 + 4:6. Ears verdict: the
+fifth is NOT audible as a clear P5 dyad. The bin set 2:3:4:6 is very close
+to a natural harmonic series (2:3:4 through the fifth partial + 6 as another
+integer multiple), and the ear reads it as a sawtooth-ish single pitched
+timbre rather than a P5 dyad. The reinforcement recipe doesn't work for P5.
+Use plain `interval_wave("P5")` (bins 2:3 only) if you want a fifth.
+
+Rule refinement: the octave-reinforcement trick works when the primary dyad
+sits at bins K:K+1 for K ≥ 3 (so K, K+1, 2K, 2K+2 forms a non-obvious set).
+At K=2 (P5) the doubled set 4:6 reduces to 2:3 in ratio terms and just
+reinforces the natural-harmonic-series interpretation.
+
+### F2 (extended adjacent-bin dyads) sound tinny, not chord-like
+
+Tested `dyad-6-7` through `dyad-10-11` — smaller intervals (septimal m3,
+whole tones, neutral seconds) as adjacent-bin pairs. Ears verdict: all
+sound interesting-but-tinny; none reads as a clear two-pitch dyad the way
+the classic 3:4, 4:5, 5:6 do.
+
+Hypothesis: as bins get higher, the underlying absolute frequencies get
+closer together in absolute Hz (e.g., at hUGETracker C-5 = 130.55 Hz,
+bin 8 = 1044 Hz, bin 9 = 1175 Hz — only 131 Hz apart, or about a whole
+tone at that absolute range). The ear's ability to resolve two pitches
+weakens as absolute frequency grows and the interval shrinks relative to
+critical-band width. Fusion wins.
+
+Consequence: the adjacency rule is necessary but not sufficient. The
+adjacent-bin dyad also needs the primary bins to sit LOW enough that the
+absolute-Hz interval is above the critical-band fusion threshold at the
+target register. Bins 2:3, 3:4, 4:5, 5:6 all satisfy this at typical
+playback registers. Bins 6:7 upward do not, at C-5 preview.
+
+### The adjacency rule (empirical, confirmed 2026-08-04)
+
+After a full round of listening tests against hUGETracker at C-5, the operative
+rule for whether a wave produces multiple audible pitches vs a single colored
+pitch is **bin adjacency**:
+
+- **Two adjacent bins** (gap ≤ 1): reliably produces two distinguishable
+  pitches. This is what FADE's `minor`/`major`/`fourth` do (bins 5:6, 4:5,
+  3:4) and why they read as clear intervals. `interval_wave()` in the library
+  exposes this working set.
+- **Three or more bins, or non-adjacent bins**: the ear fuses into a single
+  pitched source with an unusual color. Even natural-harmonic-series chords
+  like 4:5:6:7 (dom7 in JI) do NOT read as chords — they read as brass-bell
+  timbres on one pitch. Confirmed listening test: dom7-narrow, dom7-wide,
+  dom7-rolloff, min7-*, dim7-septimal all produce a *vague* harmonic
+  suggestion of the named chord to primed ears, but nothing like the
+  clarity of a FADE dyad.
+- **Maximum-spread designs fail hardest.** maj7-open (bins 4:5:6 + bin 15,
+  two octaves apart) was reported as the worst — the seventh sits so far
+  from the triad body that no chord percept survives.
+
+This is consistent with psychoacoustic fusion literature: the auditory system
+uses common onset, spectral proximity, and harmonic-series conformity to
+group partials into one perceived source. On a 4-bit-per-sample, 32-sample
+periodic waveform playing at the tracker note, all partials share the same
+onset AND sit on the same natural harmonic series AND fuse rapidly — the
+ear treats them as one instrument, not multiple voices.
+
 ### What doesn't work: "chord waves" at scattered high bins
 
 The obvious next idea is to build a full minor triad by placing partials at
@@ -118,10 +197,17 @@ musically. Potential directions worth pressuring:
   above the tracker note. Combine with a subtle lower partial for a
   "hollow octave" effect (see FADE's bank 9 "Pointy" — bins 1:2, a natural
   octave doubler).
-- **Missing-fundamental exploits.** The illusion that ruins the "minor
-  triad" idea is a *feature* if you use it deliberately — a wave with
-  energy only at 4:6:8 (all multiples of 2) will imply a phantom
-  fundamental one octave below the tracker note. Cheap sub-bass.
+- **Register shifting via missing fundamental.** The illusion that ruins
+  the "minor triad" idea is a *feature* if you use it deliberately, BUT
+  the direction is the opposite of what a naive read suggests. On the
+  wave channel bin 1 is the floor (= the tracker note), so
+  missing-fundamental analysis places the phantom root at the GCD of
+  non-zero bins — AT the tracker note (coprime bins like 2:3:4:5) or
+  ABOVE it (all-even bins like 4:6:8 → phantom at bin 2, one octave UP),
+  never below. So the practical use is "same-timbre-one-octave-up" or
+  "add harmonic warmth without pitch shift," not sub-bass. There is no
+  path to sub-bass on the wave channel via harmonic tricks — you'd need
+  content below bin 1, which doesn't exist.
 - **Vector-synthesis-style morphing.** Two waves swapped mid-note via
   subpattern instrument changes would let you scan through timbral color
   sets over time.

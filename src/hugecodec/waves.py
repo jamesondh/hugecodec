@@ -32,7 +32,10 @@ Everything is stdlib-only. The DFT is O(N²) but N=32 so it doesn't matter.
 from __future__ import annotations
 
 import math
+import struct
+import wave as _stdlib_wave
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable, Sequence
 
 # --------------------------------------------------------------------------- #
@@ -96,12 +99,30 @@ class Wave:
 
     @classmethod
     def from_hex(cls, s: str) -> "Wave":
+        """Read the 64-char 'byte-hex' form (on-disk V3+ storage, one byte
+        per nibble with upper nibble zeroed). If you have 32-char nibble-hex
+        (hUGETracker's HexWaveEdit format), use ``from_nibble_hex()``."""
         s = s.strip().lower()
         if len(s) != WAVE_SAMPLES * 2:
             raise ValueError(
                 f"hex must be {WAVE_SAMPLES * 2} chars, got {len(s)}"
             )
         return cls(tuple(int(s[2*i:2*i+2], 16) for i in range(WAVE_SAMPLES)))
+
+    @classmethod
+    def from_nibble_hex(cls, s: str) -> "Wave":
+        """Read the 32-char 'nibble-hex' form used by hUGETracker's paste
+        dialog (one hex character per wave sample).
+
+        This is what you get back from hUGETracker's export or from copying
+        text out of its HexWaveEdit field. Round-trips with ``to_nibble_hex()``.
+        """
+        s = s.strip().lower().replace(" ", "")
+        if len(s) != WAVE_SAMPLES:
+            raise ValueError(
+                f"nibble-hex must be {WAVE_SAMPLES} chars, got {len(s)}"
+            )
+        return cls(tuple(int(s[i], 16) for i in range(WAVE_SAMPLES)))
 
     @classmethod
     def from_bytes(cls, b: bytes) -> "Wave":
@@ -118,7 +139,20 @@ class Wave:
     # -- exporters ----------------------------------------------------------
 
     def to_hex(self) -> str:
+        """Return the 64-char 'byte-hex' form (on-disk V3+ storage — one byte
+        per nibble with upper nibble zeroed). For pasting into hUGETracker's
+        HexWaveEdit dialog, use ``to_nibble_hex()`` instead."""
         return "".join(f"{s:02x}" for s in self.samples)
+
+    def to_nibble_hex(self) -> str:
+        """Return the 32-char 'nibble-hex' form used by hUGETracker's paste
+        dialog (one hex character per wave sample).
+
+        This is the format to hand to a user who's going to paste into
+        hUGETracker's HexWaveEdit box. hUGETracker's own export uses this
+        format (see tracker.pas :: ConvertWaveToHexString).
+        """
+        return "".join(f"{s:x}" for s in self.samples)
 
     def to_bytes(self) -> bytes:
         return bytes(self.samples)
@@ -391,10 +425,50 @@ def interval_wave(interval: str) -> Wave:
     Microplastics' "Sine wave" bank slot). Wider ratios don't survive
     perceptually on 32 samples × 4 bits — they collapse into a single
     colored timbre. Use `from_harmonics()` for those.
+
+    For a richer version that reinforces the dyad with its octave doubling
+    (matches the spectral character of FADE's actual `minor`/`major`/`fourth`
+    waves more closely than the pure two-partial version), use
+    ``interval_wave_reinforced()``.
     """
     key = _canonicalize_interval(interval)
     num, den = INTERVAL_RATIOS[key]        # e.g. m3 → (6, 5)
     return from_harmonics([(den, 1.0), (num, 1.0)])
+
+
+def interval_wave_reinforced(interval: str, octave_weight: float = 0.3) -> Wave:
+    """Build an octave-reinforced dyad wave — the design pattern FADE uses.
+
+    Same primary dyad as ``interval_wave()`` (bins K:K+1 for the chosen
+    interval), plus a lower-amplitude octave-doubling at bins 2K:2(K+1). The
+    perceived interval doesn't change (still the same ratio) but the sound
+    is richer — closer to FADE's actual `minor`/`major`/`fourth` waves.
+
+    Spectral analysis of FADE's Microplastics waves shows they're not clean
+    two-partial sums; they consistently include energy at the octave-doubled
+    pair of the primary dyad. The default ``octave_weight`` = 0.3 matches
+    FADE's ~90-95% purity band; higher weights (0.5+) start to collapse the
+    dyad perception. FADE's own waves aren't perfectly reproducible from a
+    formula (they appear to be hand-shaped in the wave editor), but this
+    recipe captures the design principle.
+
+    Only accepts m3/M3/P4/P5 like ``interval_wave()``.
+    """
+    if not (0.0 <= octave_weight <= 1.0):
+        raise ValueError(
+            f"octave_weight must be in [0, 1], got {octave_weight}"
+        )
+    key = _canonicalize_interval(interval)
+    num, den = INTERVAL_RATIOS[key]
+    if 2 * num > NYQUIST_BIN:
+        # Can't fit the doubled octave — fall back to plain dyad
+        return from_harmonics([(den, 1.0), (num, 1.0)])
+    return from_harmonics([
+        (den, 1.0),
+        (num, 1.0),
+        (2 * den, octave_weight),
+        (2 * num, octave_weight),
+    ])
 
 
 # --------------------------------------------------------------------------- #
@@ -410,6 +484,163 @@ def wave_from_song_bank(song, index: int) -> Wave:
     return Wave.from_bytes(song.waves[index])
 
 
+# --------------------------------------------------------------------------- #
+# WAV rendering                                                               #
+# --------------------------------------------------------------------------- #
+
+# hUGETracker note naming convention (NOT scientific pitch).
+#
+# hUGETracker uses tracker-octave-notation: A-6 ≈ 440 Hz (vs scientific A4).
+# The offset is exactly two octaves: hUGETracker's "C-N" = scientific "C(N-2)".
+# So hUGETracker C-5 ≈ scientific C3 = 130.55 Hz, and hUGETracker C-7 ≈
+# scientific C5 = 524.29 Hz.
+#
+# We use hUGETracker's naming here because the whole point of the audition CLI
+# is to match hUGETracker's wave-preview semantics. Frequencies are computed
+# from the actual N register values in hUGETracker's constants.pas via the
+# Game Boy wave channel formula: freq_hz = 65536 / (2048 - N).
+#
+# Both hyphenated ("C-5") and unhyphenated ("C5") forms are accepted via
+# note_to_hz(). The dictionary key uses the unhyphenated form.
+_HUGETRACKER_REG: dict[str, int] = {
+    # Register values from SuperDisk/hUGETracker/src/constants.pas
+    "C3":   44, "CS3":  156, "D3":  262, "DS3":  363, "E3":  457, "F3":  547,
+    "FS3": 631, "G3":  710, "GS3": 786, "A3":  854, "AS3": 923, "B3":  986,
+    "C4": 1046, "CS4": 1102, "D4": 1155, "DS4": 1205, "E4": 1253, "F4": 1297,
+    "FS4": 1339, "G4": 1379, "GS4": 1417, "A4": 1452, "AS4": 1486, "B4": 1517,
+    "C5": 1546, "CS5": 1575, "D5": 1602, "DS5": 1627, "E5": 1650, "F5": 1673,
+    "FS5": 1694, "G5": 1714, "GS5": 1732, "A5": 1750, "AS5": 1767, "B5": 1783,
+    "C6": 1798, "CS6": 1812, "D6": 1825, "DS6": 1837, "E6": 1849, "F6": 1860,
+    "FS6": 1871, "G6": 1881, "GS6": 1890, "A6": 1899, "AS6": 1907, "B6": 1915,
+    "C7": 1923, "CS7": 1930, "D7": 1936, "DS7": 1943, "E7": 1949, "F7": 1954,
+    "FS7": 1959, "G7": 1964, "GS7": 1969, "A7": 1974, "AS7": 1978, "B7": 1982,
+    "C8": 1985, "CS8": 1988, "D8": 1992, "DS8": 1995, "E8": 1998, "F8": 2001,
+    "FS8": 2004, "G8": 2006, "GS8": 2009, "A8": 2011, "AS8": 2013, "B8": 2015,
+}
+
+NOTE_HZ: dict[str, float] = {
+    name: 65536.0 / (2048 - N) for name, N in _HUGETRACKER_REG.items()
+}
+
+
+def render_wav(
+    wave: "Wave",
+    path: str | Path | None = None,
+    note_hz: float = 130.55458167330676,   # hUGETracker C-5 (register N=1546)
+    duration_s: float = 2.0,
+    sample_rate: int = 44100,
+    amplitude: float = 0.5,
+    fade_ms: float = 10.0,
+) -> bytes:
+    """Render a Wave to 16-bit mono WAV audio at ``note_hz``.
+
+    Uses sample-and-hold (piecewise-constant / zero-order hold) reconstruction:
+    for each output sample, the phase is floored to pick the current wave
+    nibble. This is faithful to how the Game Boy wave DAC actually behaves —
+    it holds each 4-bit sample as a constant voltage until the next tick.
+    Aliasing above Nyquist is authentic, not a bug.
+
+    Default ``note_hz`` = 130.55 Hz = **hUGETracker's C-5** (the tracker's
+    default wave-preview pitch). This is TWO OCTAVES BELOW scientific-pitch
+    C5 (523.25 Hz) — hUGETracker uses tracker-octave-notation. See NOTE_HZ.
+
+    The signal is DC-centered (nibble 7.5 → 0) and scaled by ``amplitude``
+    (peak-safe default 0.5) before quantizing to int16. A short linear fade
+    (default 10 ms each end) prevents click artifacts at start/stop.
+
+    If ``path`` is None, returns the WAV file as bytes. Otherwise writes to
+    ``path`` and returns the same bytes for convenience.
+
+    Notes:
+    - Sample rate default 44100 Hz; C5 default matches hUGETracker's wave
+      preview pitch so cross-checks are direct.
+    - This does NOT model any envelope, volume shift, or wave-position phase
+      behavior of the actual channel — it's a pure 32-sample loop.
+    """
+    if amplitude < 0.0 or amplitude > 1.0:
+        raise ValueError(f"amplitude must be in [0, 1], got {amplitude}")
+    if duration_s <= 0:
+        raise ValueError(f"duration_s must be positive, got {duration_s}")
+    if note_hz <= 0:
+        raise ValueError(f"note_hz must be positive, got {note_hz}")
+    if sample_rate <= 0:
+        raise ValueError(f"sample_rate must be positive, got {sample_rate}")
+
+    n_frames = int(round(sample_rate * duration_s))
+    samples = wave.samples  # tuple[int, ...] length 32
+    peak = amplitude * 32767.0
+    # Precompute step size to advance through wave-phase per output sample.
+    # Each cycle = 32 wave-samples; note_hz cycles/sec → note_hz*32 wave-samples/sec.
+    wave_samples_per_second = note_hz * WAVE_SAMPLES
+    phase_step = wave_samples_per_second / sample_rate  # wave-samples per output sample
+    # Fade window in samples (each side)
+    fade_n = int(round(sample_rate * fade_ms / 1000.0))
+    fade_n = min(fade_n, n_frames // 2)
+
+    out = [0] * n_frames
+    phase = 0.0
+    for n in range(n_frames):
+        idx = int(phase) % WAVE_SAMPLES
+        v = (samples[idx] - 7.5) / 7.5   # -> [-1.0, +1.0]
+        pcm = v * peak
+        # Linear fade envelope
+        if fade_n > 0:
+            if n < fade_n:
+                pcm *= n / fade_n
+            elif n >= n_frames - fade_n:
+                pcm *= (n_frames - 1 - n) / fade_n
+        pcm_i = int(round(pcm))
+        # Clamp defensively (fade + amplitude ≤ 1.0 should keep us in range)
+        if pcm_i > 32767:
+            pcm_i = 32767
+        elif pcm_i < -32768:
+            pcm_i = -32768
+        out[n] = pcm_i
+        phase += phase_step
+
+    frame_bytes = struct.pack(f"<{n_frames}h", *out)
+
+    # Build WAV in memory, then optionally mirror to disk
+    import io
+    buf = io.BytesIO()
+    with _stdlib_wave.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sample_rate)
+        f.writeframes(frame_bytes)
+    data = buf.getvalue()
+
+    if path is not None:
+        Path(path).write_bytes(data)
+
+    return data
+
+
+def note_to_hz(name: str) -> float:
+    """Look up an hUGETracker-notation note name in the built-in table.
+
+    Accepts both hyphenated ('C-5') and unhyphenated ('C5') forms; sharps as
+    'C#5' or 'CS5'. Case-insensitive. Range: C3..B8 (matches hUGETracker's
+    playable range).
+
+    NOTE ON CONVENTION: hUGETracker note names are two octaves lower than
+    scientific pitch. hUGETracker's C-5 = 130.55 Hz = scientific C3;
+    hUGETracker's C-7 = 524.29 Hz = scientific C5. If you want a specific
+    Hz value, pass note_hz to render_wav() directly.
+
+    Raises KeyError for anything outside C3..B8.
+    """
+    key = name.strip().upper()
+    # Normalize 'C-5' → 'C5' and 'C#5' → 'CS5'
+    key = key.replace("-", "").replace("#", "S")
+    if key not in NOTE_HZ:
+        raise KeyError(
+            f"unknown note {name!r}. Known: {sorted(NOTE_HZ)} "
+            f"(or pass note_hz as a float directly)"
+        )
+    return NOTE_HZ[key]
+
+
 __all__ = [
     "Wave",
     "WaveReport",
@@ -418,8 +649,12 @@ __all__ = [
     "analyze",
     "from_harmonics",
     "interval_wave",
+    "interval_wave_reinforced",
     "wave_from_song_bank",
+    "render_wav",
+    "note_to_hz",
     "INTERVAL_RATIOS",
+    "NOTE_HZ",
     "WAVE_SAMPLES",
     "WAVE_MAX",
     "NYQUIST_BIN",

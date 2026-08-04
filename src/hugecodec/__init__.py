@@ -18,8 +18,13 @@ from .waves import (
     analyze,
     from_harmonics,
     interval_wave,
+    interval_wave_reinforced,
     wave_from_song_bank,
+    render_wav,
+    note_to_hz,
+    NOTE_HZ,
 )
+from .presets import PRESETS, PRESET_CATEGORIES
 
 __all__ = [
     "Song",
@@ -39,5 +44,12 @@ __all__ = [
     "analyze",
     "from_harmonics",
     "interval_wave",
+    "interval_wave_reinforced",
     "wave_from_song_bank",
+    "render_wav",
+    "note_to_hz",
+    "NOTE_HZ",
+    # presets
+    "PRESETS",
+    "PRESET_CATEGORIES",
 ]

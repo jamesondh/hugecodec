@@ -13,8 +13,9 @@ from pathlib import Path
 
 from .format import INSTR_TYPE_NAMES
 from .json_dump import song_to_json
+from .presets import PRESETS, PRESET_CATEGORIES
 from .reader import read_song, ReadError
-from .waves import Wave, analyze, WAVE_MAX
+from .waves import Wave, analyze, render_wav, note_to_hz, NOTE_HZ, WAVE_MAX
 
 
 def _cmd_dump(args: argparse.Namespace) -> int:
@@ -164,6 +165,87 @@ def _cmd_waves(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_note(args: argparse.Namespace) -> float:
+    """Turn --note (name) or --note-hz (float) into a frequency."""
+    if args.note_hz is not None:
+        return float(args.note_hz)
+    return note_to_hz(args.note)
+
+
+def _cmd_audition(args: argparse.Namespace) -> int:
+    """List, print hex for, or render WAV audio of the named-preset registry."""
+    action = args.action
+
+    if action == "list":
+        print("Preset registry — 32-sample wave designs for A/B testing.")
+        print("Hex column is the 32-char nibble-hex format for hUGETracker's paste dialog.")
+        print()
+        for category, names in PRESET_CATEGORIES.items():
+            print(f"[{category}]")
+            for name in names:
+                w = PRESETS[name]
+                r = analyze(w)
+                peaks_str = ":".join(str(p.bin) for p in r.peaks[:4])
+                print(f"  {name:24s}  peaks {peaks_str:15s}  hex {w.to_nibble_hex()}")
+            print()
+        return 0
+
+    if action == "hex":
+        if args.name not in PRESETS:
+            print(f"error: unknown preset {args.name!r}. "
+                  f"Try `hugecodec audition list`.", file=sys.stderr)
+            return 1
+        # Default to nibble-hex (paste-ready). --byte-hex for on-disk 64-char form.
+        wave = PRESETS[args.name]
+        if getattr(args, "byte_hex", False):
+            print(wave.to_hex())
+        else:
+            print(wave.to_nibble_hex())
+        return 0
+
+    if action == "render":
+        note_hz = _resolve_note(args)
+
+        if args.name == "all":
+            out_dir = Path(args.out) if args.out else Path(".")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for name, wave in PRESETS.items():
+                target = out_dir / f"{name}.wav"
+                render_wav(
+                    wave,
+                    path=target,
+                    note_hz=note_hz,
+                    duration_s=args.duration,
+                    amplitude=args.amplitude,
+                )
+                print(f"wrote {target}  (paste {wave.to_nibble_hex()})")
+            return 0
+
+        if args.name not in PRESETS:
+            print(f"error: unknown preset {args.name!r}. "
+                  f"Try `hugecodec audition list` or `all`.", file=sys.stderr)
+            return 1
+
+        if not args.out:
+            print("error: --out required when rendering a single preset",
+                  file=sys.stderr)
+            return 1
+
+        wave = PRESETS[args.name]
+        render_wav(
+            wave,
+            path=args.out,
+            note_hz=note_hz,
+            duration_s=args.duration,
+            amplitude=args.amplitude,
+        )
+        print(f"wrote {args.out}  (paste {wave.to_nibble_hex()}  note {note_hz:.2f} Hz)")
+        return 0
+
+    print(f"error: unknown audition action {action!r}", file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hugecodec", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -198,6 +280,48 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--top-bins", type=int, default=6,
                    help="how many FFT peaks to list per wave (default 6)")
     w.set_defaults(func=_cmd_waves)
+
+    # -- audition -----------------------------------------------------------
+    a = sub.add_parser(
+        "audition",
+        help="preset registry: list, print hex, render WAV",
+        description=(
+            "Named wave presets for chord-flavored timbre experimentation. "
+            "Use `list` to see the registry, `hex NAME` to get a paste-into-"
+            "hUGETracker string, or `render NAME --out FILE` to write a WAV. "
+            "`render all --out DIR` renders every preset in one shot."
+        ),
+    )
+    a_sub = a.add_subparsers(dest="action", required=True)
+
+    a_list = a_sub.add_parser("list", help="list all presets with peaks + hex")
+    a_list.set_defaults(func=_cmd_audition)
+
+    a_hex = a_sub.add_parser(
+        "hex",
+        help="print hex of one preset (no WAV). Default = 32-char nibble-hex "
+             "for pasting into hUGETracker.",
+    )
+    a_hex.add_argument("name", help="preset name (see `audition list`)")
+    a_hex.add_argument("--byte-hex", action="store_true",
+                       help="output 64-char byte-hex (V3+ on-disk format) instead")
+    a_hex.set_defaults(func=_cmd_audition)
+
+    a_render = a_sub.add_parser("render",
+                                help="render a preset (or `all`) to WAV")
+    a_render.add_argument("name",
+                          help="preset name, or `all` for the whole registry")
+    a_render.add_argument("--out", default=None,
+                          help="output WAV path (single) or directory (all)")
+    a_render.add_argument("--note", default="C5",
+                          help="note name (default C5 — matches hUGETracker preview)")
+    a_render.add_argument("--note-hz", type=float, default=None,
+                          help="override --note with a raw frequency")
+    a_render.add_argument("--duration", type=float, default=2.0,
+                          help="seconds of audio to render (default 2.0)")
+    a_render.add_argument("--amplitude", type=float, default=0.5,
+                          help="peak amplitude in [0,1] (default 0.5)")
+    a_render.set_defaults(func=_cmd_audition)
 
     args = parser.parse_args(argv)
     return args.func(args)

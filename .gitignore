@@ -9,3 +9,6 @@ build/
 *.egg-info/
 .mypy_cache/
 .ruff_cache/
+
+# Local scratch — recordings from hUGETracker for A/B validation, etc.
+tmp/
