@@ -21,11 +21,19 @@ from typing import Literal
 # Sentinel / empty values for cells                                           #
 # --------------------------------------------------------------------------- #
 
-NOTE_EMPTY = 90          # no note on this row (empirical from corpus)
+NOTE_EMPTY = 90          # NO_NOTE per hUGETracker constants.pas:141
 NOTE_OFF = 91            # note-off marker (TODO: verify against tracker source)
 INSTRUMENT_EMPTY = 0     # 0 = no instrument change
-VOLUME_EMPTY = 0         # V6+ only; interpretation TBD
+VOLUME_EMPTY = 0         # V6+ only; 0 = no volume change on this cell
 EFFECT_EMPTY = 0         # 0 with param 0 = no effect
+
+# Subpattern note-field encoding. In an instrument's subpattern the `note`
+# field is a SIGNED OFFSET expressed as MIDDLE_NOTE + delta. Constants
+# from hUGETracker/src/constants.pas (HIGHEST_NOTE=71, LOWEST_NOTE=0,
+# MIDDLE_NOTE=(71-0)/2+1 = 36). See EFFECTS.md § "Offset encoding".
+MIDDLE_NOTE = 36
+LOWEST_NOTE = 0
+HIGHEST_NOTE = 71
 
 # Instrument type enum (matches Pascal TInstrumentType)
 INSTR_SQUARE: Literal[0] = 0
@@ -200,3 +208,35 @@ class Song:
     def order_count(self) -> int:
         """Max order length across the 4 channels. Mirrors Pascal OrderCount."""
         return max((len(ch) for ch in self.order_matrix), default=0)
+
+    # --- order-matrix trailer handling -------------------------------------
+
+    def playable_orders(self, channel: int) -> list[int]:
+        """Return the *playable* orders for a channel — i.e. all on-disk
+        entries except the final trailer slot.
+
+        hUGETracker's on-disk `OrderMatrix[ch]` = `playable_orders + [trailer]`.
+        The trailer is a UI buffer never displayed or played; see
+        `NOTES.md` § "OrderMatrix trailer" for the source cross-reference.
+
+        Returns an empty list if the channel array is empty (no trailer, no
+        orders — degenerate file).
+        """
+        if channel not in (0, 1, 2, 3):
+            raise ValueError(f"channel must be 0..3, got {channel}")
+        orders = self.order_matrix[channel]
+        return list(orders[:-1]) if orders else []
+
+    def set_playable_orders(self, channel: int, orders: list[int], *,
+                            trailer: int = 0) -> None:
+        """Set the playable orders for a channel; the trailer slot is
+        appended automatically.
+
+        Use this instead of assigning to `song.order_matrix[ch]` directly.
+        The raw `order_matrix` field is length-of-on-disk (playable + 1);
+        losing the trailer causes hUGETracker to open the song with an empty
+        order grid, which silently falls back to Pattern[0] on every channel.
+        """
+        if channel not in (0, 1, 2, 3):
+            raise ValueError(f"channel must be 0..3, got {channel}")
+        self.order_matrix[channel] = list(orders) + [trailer]

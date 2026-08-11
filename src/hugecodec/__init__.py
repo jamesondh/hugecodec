@@ -10,8 +10,12 @@ from .format import (
     INSTRUMENT_EMPTY,
     VOLUME_EMPTY,
     EFFECT_EMPTY,
+    MIDDLE_NOTE,
+    LOWEST_NOTE,
+    HIGHEST_NOTE,
 )
 from .reader import read_song, ReadError
+from .writer import write_song, WriteError
 from .waves import (
     Wave,
     WaveReport,
@@ -36,8 +40,13 @@ __all__ = [
     "INSTRUMENT_EMPTY",
     "VOLUME_EMPTY",
     "EFFECT_EMPTY",
+    "MIDDLE_NOTE",
+    "LOWEST_NOTE",
+    "HIGHEST_NOTE",
     "read_song",
     "ReadError",
+    "write_song",
+    "WriteError",
     # waves
     "Wave",
     "WaveReport",

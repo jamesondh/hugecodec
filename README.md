@@ -11,8 +11,9 @@ round-trip through a text DSL suitable for working with an LLM.
 
 ## Status
 
-Reader only, versions V1–V6. V7 support pending a V7 sample file (none in the
-current corpus). Writer, upgrade chain, and text DSL are all planned.
+Reader supports V1–V7. Writer supports V6 and V7 (byte-perfect round-trip
+modulo Pascal `ShortString` stack padding — verified against every V6
+corpus file). Upgrade chain and text DSL are planned.
 
 ## Install
 
@@ -94,11 +95,54 @@ sample-import analysis.
 
 ```bash
 python3 tests/test_roundtrip.py     # parse every sample without crashing
+python3 tests/test_writer.py        # writer semantic + byte-diff round-trip
 python3 tests/test_waves.py         # spectral analysis + synthesis checks
 python3 tests/test_wavetable.py     # Serum-shaped WAV emitter checks
 ```
 
 Test corpus lives at `~/hugetracker-sample-songs/` — 22 files spanning V1–V6.
+
+## Writing songs
+
+```python
+from hugecodec import read_song, write_song
+from hugecodec.subpatterns import arp_cycle, kick_transient, duty_morph
+
+song = read_song("song.uge")
+
+# Modify — e.g. attach a broken-chord arp to the wave instrument.
+song.wave_instruments[1].subpattern_enabled = True
+song.wave_instruments[1].subpattern = arp_cycle([0, 3, 7], ticks_per_step=4)
+
+# When editing the order matrix, use the trailer-aware helpers:
+song.set_playable_orders(0, [0, 1, 2])   # writes [0, 1, 2, 0] on disk
+
+Path("song-mod.uge").write_bytes(write_song(song))
+```
+
+The writer defaults to `song.source_version` (V6 or V7); pass
+`target_version=7` to explicitly upgrade a V6 song.
+
+`hugecodec.subpatterns` provides constructors for the common corpus
+shapes — `pluck`, `kick_transient`, `hat_flat`, `arp_cycle`,
+`vibrato_ramp`, `duty_morph`, `envelope_steps`. Each handles the
+compiled-32-row limit and the `Volume`-field-as-jump-target loop
+semantics.
+
+## Effect reference
+
+`EFFECTS.md` documents every effect with (a) the docs summary, (b)
+corpus usage counts / typical params, (c) hugecodec misuse examples
+and how to avoid them. The row-scoped-only rule is the most important
+thing there — effects apply only on the row they appear on unless
+re-entered on every affected row (or placed in a subpattern).
+
+## Analysis scripts
+
+```bash
+python3 tests/analyze_effects.py            # per-effect usage across corpus
+python3 tests/analyze_subpatterns.py        # subpattern shape catalog
+```
 
 ## Format notes
 

@@ -257,6 +257,71 @@ Channel indices: 0 = CH1 (Duty1), 1 = CH2 (Duty2), 2 = CH3 (Wave), 3 = CH4 (Nois
 The value at `OrderMatrix[ch][i]` is a **pattern key**, i.e., an index into
 `patterns.data` (V5+) or an implicit 0-based index (V1–V4).
 
+### OrderMatrix trailer (verified against `tracker.pas` 2026-08-11)
+
+**The last entry of each channel's OrderMatrix array is a UI trailer, not a
+playable order.** The playable orders are `OrderMatrix[ch][0..len-2]`; the
+final slot is a hidden buffer the tracker uses when the user adds a new row
+in the order editor.
+
+Evidence, from `SuperDisk/hUGETracker` at branch `hUGETracker`:
+
+- `tracker.pas:1131-1133` (`CopyOrderMatrixToOrderGrid`):
+  ```pascal
+  for R := 0 to High(Song.OrderMatrix[C])-1 do
+    OrderEditStringGrid.Cells[C+1, R+1] := IntToStr_(Song.OrderMatrix[C, R]);
+  ```
+  Displays only `[0..len-2]`.
+
+- `tracker.pas:1101-1107` (`CopyOrderGridToOrderMatrix`):
+  ```pascal
+  SetLength(Song.OrderMatrix[C], RowCount);
+  for R := 0 to RowCount-2 do
+    Song.OrderMatrix[C, R] := OrderNum;
+  ```
+  Writes only `[0..len-2]`; the last slot is `SetLength`-default (zero) or
+  stale from a previous state.
+
+- `tracker.pas:1082-1088` (`ReloadPatterns`): if the order grid row can't be
+  parsed, `OrderNum` silently defaults to 0 and `TrackerGrid.LoadPattern(I, 0)`
+  runs for all 4 channels. This is what "all 4 channels show identical
+  content" looks like when the on-disk order length is 1 (visible length 0
+  → empty grid → fallback to pattern 0 everywhere).
+
+- Empirical: 84/88 channels in the corpus have trailer=0. The 4 exceptions
+  (Coffee Bat *Blue Ocean* all channels) are stale values from length changes
+  the tracker didn't zero.
+
+**Practical rule for hugecodec:** the reader keeps the raw on-disk length in
+`song.order_matrix[ch]` for round-trip fidelity. The `playable_orders(ch)` /
+`set_playable_orders(ch, orders)` helpers are the friendly interface and
+handle the trailer automatically. Never `song.order_matrix[ch] = [...]` with
+your intended playable orders — you'll drop the trailer and the tracker will
+open the file with an empty order grid.
+
+### Pattern insertion order (V5+ sparse patterns)
+
+The V5+ pattern section stores `(key, data)` pairs, and the tracker preserves
+the **insertion order** of its `TFPGMap<Integer, PPattern>` at write time
+(`song.pas:455-459`, iterating `Patterns.Keys[i]` for `i := 0 to Count-1`).
+Byte-for-byte round-trip requires honoring this order — sorting by key on
+write produces semantically-equivalent but byte-diverged output.
+
+`hugecodec`'s reader inserts patterns into a dict in on-disk order (Python
+3.7+ dict preserves insertion order). The writer must iterate the dict's
+key sequence, not `sorted(keys)`.
+
+### Writer version target: V6 vs V7
+
+Current hUGETracker's `WriteSongToStream` always writes V7 (`TSong =
+TSongV7`, per-channel `TicksPerRow: array[0..3] of Integer`). All prior
+version-N types have `ReadSongFromStreamVN` helpers plus an `UpgradeSong(VN)
+→ V7` chain on load, so writing V6 remains legal.
+
+For round-trip against the V6 corpus, `hugecodec.write_song` defaults to
+`song.source_version`. Explicit `target_version=7` bumps to the current
+tracker save format.
+
 ## Note values
 
 Not yet verified against the tracker. TODO: cross-reference with `constants.pas`
